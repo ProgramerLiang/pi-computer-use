@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "id": "local.pi-computer-use",
+  "id": "corripo.computer-use",
   "name": "PI Computer Use",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Linux 桌面的 computer use 工具集：截图、鼠标移动/点击、键盘输入、环境探测。Wayland 走 grim + ydotool，X11 走 import/scrot + xdotool。",
   "main": "main.js",
   "contributes": {

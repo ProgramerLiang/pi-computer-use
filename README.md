@@ -166,7 +166,7 @@ Wayland 高缩放下 PNG IHDR 是物理像素尺寸，不会等于逻辑请求�
 
 ## 安装到 PI-Desktop
 
-插件 id：`local.pi-computer-use`，权限：`agent.tool.register`（高权限，需显式同意）。使用 PI-Desktop 的插件工具打包并在设置中安装。
+插件 id：`corripo.computer-use`，权限：`agent.tool.register`（高权限，需显式同意）。使用 PI-Desktop 的插件工具打包并在设置中安装。
 
 ## 开发
 

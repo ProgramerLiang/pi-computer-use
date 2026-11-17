@@ -205,27 +205,103 @@ test("Wayland 滚轮：返回 unsupported_on_backend 而不是假成功", async 
 
 /* --------------------------------------------------------------- 键盘 */
 
-test("输入文本：空字符串被拒；Wayland 未验证送达时明确失败", async () => {
-  const run = fakeRun();
-  const rt = waylandRuntime({ run });
-  await assert.rejects(() => toolTypeText(rt, { text: "" }), /text/);
-  await assert.rejects(
-    () => toolTypeText(rt, { text: "hello world" }),
-    (err) => err.code === "input_not_delivered"
-  );
-  assert.equal(run.calls.length, 0);
+test("空文本被拒", async () => {
+  await assert.rejects(() => toolTypeText(waylandRuntime(), { text: "" }), /text/);
 });
 
-test("Wayland typing and keypress fail explicitly until client delivery is verified", async () => {
-  const run = fakeRun();
-  const rt = waylandRuntime({ run });
-  for (const action of [
-    () => toolTypeText(rt, { text: "probe" }),
-    () => require("../lib/tools.js").toolKeyPress(rt, { key: "ctrl+c" }),
-  ]) {
-    await assert.rejects(action, (err) => err.code === "input_not_delivered");
-  }
-  assert.equal(run.calls.length, 0);
+function imeRunner(options = {}) {
+  const calls = [];
+  let running = true;
+  const run = (argv) => {
+    calls.push(argv);
+    if (argv[0] === "pgrep" && argv.includes("-x")) {
+      return running
+        ? { ok: true, stdout: "55158 fcitx5 -d --replace\n", status: 0 }
+        : { ok: false, stdout: "", status: 1 };
+    }
+    if (argv[0] === "pkill") {
+      if (!options.stopFails) running = false;
+      return { ok: !options.stopFails, stdout: "", status: options.stopFails ? 1 : 0 };
+    }
+    if (argv[0] === "nohup") {
+      if (!options.restoreFails) running = true;
+      return { ok: !options.restoreFails, stdout: "", status: options.restoreFails ? 1 : 0 };
+    }
+    if (argv[0] === "pgrep" && argv.includes("-f")) {
+      return running && !options.restoreFails
+        ? { ok: true, stdout: "55170 fcitx5-wayland-launcher\n", status: 0 }
+        : { ok: false, stdout: "", status: 1 };
+    }
+    if (argv[0] === "/usr/bin/ydotool" && options.injectFails) return { ok: false, stderr: "injection failed", status: 1 };
+    return { ok: true, stdout: "", status: 0 };
+  };
+  return { calls, run, isRunning: () => running };
+}
+
+test("IME 默认 false 时 fail-closed，不停止或恢复", async () => {
+  const fake = imeRunner();
+  await assert.rejects(() => toolTypeText(waylandRuntime({ run: fake.run }), { text: "probe" }), (err) => err.code === "input_blocked_by_ime");
+  assert.equal(fake.calls.some((argv) => ["pkill", "nohup"].includes(argv[0])), false);
+});
+
+test("opt-in 顺序为检测、暂停、注入、恢复，并确认主进程/backend", async () => {
+  const fake = imeRunner();
+  const out = await toolTypeText(waylandRuntime({ run: fake.run, sleep: async () => {} }), { text: "probe", allowImeSuspend: true });
+  const names = fake.calls.map((argv) => argv[0]);
+  assert.ok(names.indexOf("pgrep") < names.indexOf("pkill"));
+  assert.ok(names.indexOf("pkill") < names.indexOf("/usr/bin/ydotool"));
+  assert.ok(names.indexOf("/usr/bin/ydotool") < names.indexOf("nohup"));
+  assert.equal(out.imeSuspended, true);
+  assert.equal(out.imeRestored, true);
+  assert.equal(fake.isRunning(), true);
+});
+
+test("注入失败时 finally 仍恢复 IME", async () => {
+  const fake = imeRunner({ injectFails: true });
+  await assert.rejects(() => toolTypeText(waylandRuntime({ run: fake.run, sleep: async () => {} }), { text: "probe", allowImeSuspend: true }), (err) => err.code === "command_failed");
+  assert.ok(fake.calls.some((argv) => argv[0] === "nohup"));
+  assert.equal(fake.isRunning(), true);
+});
+
+test("恢复失败返回 ime_restore_failed 和 recoveryCommand", async () => {
+  const fake = imeRunner({ restoreFails: true });
+  const err = await toolTypeText(waylandRuntime({ run: fake.run, sleep: async () => {}, imeRestoreAttempts: 1 }), { text: "probe", allowImeSuspend: true }).catch((error) => error);
+  assert.equal(err.code, "ime_restore_failed");
+  const result = err.toResult();
+  assert.equal(result.error.recoveryCommand, "fcitx5 -d --replace");
+  assert.equal(result.error.imeRestored, false);
+});
+
+test("IME 未运行时不暂停或恢复", async () => {
+  const calls = [];
+  const run = (argv) => {
+    calls.push(argv);
+    if (argv[0] === "pgrep") return { ok: false, status: 1, stdout: "" };
+    return { ok: true, status: 0, stdout: "", stderr: "" };
+  };
+  const out = await toolTypeText(waylandRuntime({ run }), { text: "probe" });
+  assert.equal(out.imeSuspended, false);
+  assert.equal(calls.some((argv) => ["pkill", "nohup"].includes(argv[0])), false);
+});
+
+test("检测精确匹配 fcitx5 主进程，不把 fcitx5 backend 当主进程", async () => {
+  const calls = [];
+  const run = (argv) => {
+    calls.push(argv);
+    if (argv[0] === "pgrep") return { ok: true, status: 0, stdout: "55158 fcitx5-wayland-launcher\n55159 fcitx5-dbus-watcher\n" };
+    return { ok: true, status: 0, stdout: "", stderr: "" };
+  };
+  const out = await toolTypeText(waylandRuntime({ run }), { text: "probe" });
+  assert.equal(out.ok, true);
+  assert.equal(calls.some((argv) => argv[0] === "pkill"), false);
+});
+
+test("fcitx5 运行时组合键继续 fail-closed", async () => {
+  const fake = imeRunner();
+  await assert.rejects(
+    () => require("../lib/tools.js").toolKeyPress(waylandRuntime({ run: fake.run }), { key: "ctrl+c" }),
+    (err) => err.code === "input_blocked_by_ime"
+  );
 });
 
 /* --------------------------------------------------------------- 错误分支 */

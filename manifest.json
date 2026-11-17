@@ -155,7 +155,7 @@
       },
       {
         "name": "cu_type_text",
-        "description": "把一段文本输入到当前焦点窗口（不经过剪贴板）。Unicode 文本由 ydotool type / xdotool type 处理。",
+        "description": "把文本输入到当前焦点窗口。Wayland 检测到 fcitx5 默认返回 input_blocked_by_ime；只有显式 allowImeSuspend=true 才短暂停用并重启 fcitx5。",
         "risk": "medium",
         "schema": {
           "type": "object",
@@ -169,6 +169,10 @@
               "minimum": 0,
               "maximum": 2000,
               "description": "可选：X11 下每个字符之间的延时毫秒"
+            },
+            "allowImeSuspend": {
+              "type": "boolean",
+              "description": "默认 false。true 会在输入前短暂停用 fcitx5 并重启；中英状态可能变化。"
             }
           },
           "required": [

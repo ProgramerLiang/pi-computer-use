@@ -115,7 +115,8 @@ systemctl --user status ydotoold.service --no-pager 2>/dev/null || systemctl sta
 ls -l /dev/uinput "$XDG_RUNTIME_DIR/.ydotool_socket"
 ```
 
-实测环境为 niri/Wayland + fcitx5。`which wev` 为 `/usr/bin/wev`。wev 窗口聚焦后分别发送 `ydotool type 'CU_PROBE_a1'` 和 `wtype 'CU_PROBE_b2'`；焦点核验仍为 wev，但两次屏幕观察到的事件区域都为空。停用 fcitx5 后，在专用 Alacritty 中运行 `cat > /tmp/cu_typing_probe2.txt`，执行 `ydotool type 'CU_PROBE_7f3a9'` 和 Enter，读回原文为 `CU_PROBE_7f3a9`，`od -c` 显示 `C U _ P R O B E _ 7 f 3 a 9 \n`。这证明 fcitx5 状态影响文本输入，但由于 wev 无事件显示且其观察过程无法捕获 stdout，不能区分输入法拦截与更低层派发问题。Ctrl+C 测试未获得可靠的独立进程前后对照，不据此归因。fcitx5 已恢复运行。Wayland 下插件暂拒绝键盘输入并返回 `input_not_delivered`，避免把命令成功误报为客户端已收到。
+fcitx5 在运行时，`cu_type_text` 默认 fail-closed，返回 `input_blocked_by_ime`。调用方必须在该次工具调用中显式设置 `allowImeSuspend: true` 才会尝试暂停精确匹配的 `fcitx5` 主进程、输入文本并重启输入法；`cu_key_press` 始终保持拦截行为。
+显式 opt-in 会短暂中断输入法，可能影响进行中的合成输入，并可能改变中英/输入法状态。调用成功会返回 `imeSuspended` / `imeRestored`；当前状态不可读取，因此不保证恢复到原中文态。若返回 `ime_restore_failed`，请立即运行 `fcitx5 -d --replace` 并核对进程恢复。
 显示器物理尺寸 1920×1080、逻辑尺寸 1536×864、scale 1.25。修复前区域请求 320×180 被误作逻辑 320×180，PNG IHDR 为 400×225（等于逻辑尺寸再乘 1.25）。确认 grim `-g` 使用逻辑坐标后，修复为直接传逻辑区域；真实复测 320×180 输出 PNG 400×225。位置对照通过：整屏 PNG 中物理裁切 `(250,150)-(650,375)` 与区域 PNG 逐像素相同。
 
 Wayland 高缩放下 PNG IHDR 是物理像素尺寸，不会等于逻辑请求尺寸；本插件不做重采样。
@@ -134,21 +135,21 @@ Wayland 高缩放下 PNG IHDR 是物理像素尺寸，不会等于逻辑请求�
 
 缺依赖或能力不支持时返回 `{ ok: false, error: { code, message, hint } }`，不静默失败。常见错误码：
 
-| code | 含义 |
+| code | 含义与处理 |
 | --- | --- |
 | `no_graphical_session` | 当前是 tty/SSH，没有 X11 或 Wayland |
 | `no_input_backend` | 缺 `ydotool` / `wtype` / `xdotool` |
 | `ydotoold_not_running` | 找不到 ydotoold socket |
+| `ime_restore_failed` | fcitx5 主进程/backend 未确认恢复；立即执行 `fcitx5 -d --replace` 并检查进程 |
+| `input_blocked_by_ime` | fcitx5 正在运行且未显式允许暂停；可改用应用自身输入入口，或慎重 opt-in |
 | `unsupported_on_backend` | 当前后端不支持该动作（Wayland 滚轮、wtype 组合键等） |
-| `invalid_coordinate` | 坐标不是非负整数，或只给了 x 没给 y |
 | `coordinate_out_of_bounds` | 坐标超出实际屏幕范围 |
 | `command_failed` | 底层命令失败，消息包含 stderr 摘要 |
-| `no_window_backend` | 当前合成器没有可用的窗口枚举方式 |
+| `invalid_coordinate` | 坐标不是非负整数，或只给了 x 没给 y |
 
 ## 已知限制
 `ydotoold` 与 unit 的名称随发行版/打包版本而异；先检查包文件清单及本机 user/system unit。若本机存在系统级 `ydotool.service`，可用 `sudo systemctl enable --now ydotool.service` 启动；否则按发行版方式运行守护进程。本机实测为用户进程，socket 位于 `$XDG_RUNTIME_DIR/.ydotool_socket`。
 
-实测环境为 niri/Wayland + fcitx5：设备层已观察到 ydotool EV_KEY 写入，焦点和 socket 已排除，但专用终端未收到文本，目标文件未创建。当前无法判定事件是被合成器拦截还是到达客户端后未处理：`wev` 未安装，且本轮未停用 fcitx5 做对照。niri 输入配置仅见常规 XKB 设置，未见键盘抓取选项。此前命令返回码为 0 不代表应用已收到事件；因此插件在 Wayland 下的 `cu_type_text` / `cu_key_press` 暂返回 `input_not_delivered`，不执行输入命令、不报告成功。验证客户端送达后才能恢复该后端。
 
 - Wayland 下 ydotool 1.0.4 的 CLI 没有滚轮子命令；插件明确返回 `unsupported_on_backend`。X11 的 xdotool 滚轮可用。
 - Wayland 协议没有通用窗口枚举接口。插件只对 niri 实现 `niri msg --json windows`；其它合成器返回 `no_window_backend`。

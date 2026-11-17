@@ -244,13 +244,21 @@ test("命令失败时把 stderr 带出来，而不是静默成功", async () => 
 /* --------------------------------------------------------------- 只读探测 */
 
 test("screen_info：报告会话类型、屏幕尺寸与依赖安装情况", async () => {
-  const rt = waylandRuntime({ which: (bin) => (bin === "grim" ? "/usr/bin/grim" : null) });
+  const rt = waylandRuntime({
+    which: (bin) => (bin === "grim" ? "/usr/bin/grim" : null),
+    environment: {
+      session: WAYLAND,
+      input: { kind: "ydotool", bin: "/usr/bin/ydotool", note: "ydotool（Wayland）" },
+      screenshot: { kind: "grim", bin: "/usr/bin/grim", note: "grim（Wayland）" },
+    },
+    env: { XDG_SESSION_TYPE: "wayland", PATH: "/nonexistent" },
+  });
   const out = await toolScreenInfo(rt);
   assert.equal(out.ok, true);
   assert.equal(out.sessionType, "wayland");
   assert.deepEqual(out.screen, { width: 1920, height: 1080 });
   assert.equal(out.screenshotBackend, "grim");
   assert.equal(out.inputBackend, "ydotool");
-  assert.equal(out.deps.grim, true);
+  assert.equal(out.deps.grim, false);
   assert.equal(out.deps.ydotool, false);
 });

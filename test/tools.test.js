@@ -52,7 +52,9 @@ function fakeRun(png = pngWithSize(1920, 1080)) {
     calls.push(argv);
     const target = argv[argv.length - 1];
     if (typeof target === "string" && target.endsWith(".png")) {
-      fs.writeFileSync(target, png);
+      const geometryIndex = argv.indexOf("-g");
+      const geometry = geometryIndex >= 0 ? argv[geometryIndex + 1].match(/ (\d+)x(\d+)$/) : null;
+      fs.writeFileSync(target, geometry ? pngWithSize(Number(geometry[1]), Number(geometry[2])) : png);
     }
     return { ok: true, status: 0, stdout: "", stderr: "" };
   };
@@ -96,10 +98,22 @@ test("截图：区域会裁剪成 grim 的 -g 几何语法", async () => {
   const run = fakeRun();
   const rt = waylandRuntime({ run });
   await toolScreenshot(rt, { dir: tmpDir(), region: { x: 10, y: 20, width: 300, height: 200 } });
-  const shot = run.calls.at(-1);
-  assert.deepEqual(shot.slice(1, 3), ["-g", "10,20 300x200"]);
+  assert.deepEqual(run.calls.at(-1).slice(1, 3), ["-g", "10,20 300x200"]);
 });
 
+test("截图：grim 接收逻辑区域，输出 PNG 按 scale 呈现物理像素", async () => {
+  const calls = [];
+  const run = (argv) => {
+    calls.push(argv);
+    const geometry = argv[0] === "/usr/bin/grim" && argv.includes("-g") ? argv[argv.indexOf("-g") + 1].match(/ (\d+)x(\d+)$/) : null;
+    fs.writeFileSync(argv.at(-1), geometry ? pngWithSize(Number(geometry[1]), Number(geometry[2])) : pngWithSize(1920, 1080));
+    return { ok: true, status: 0, stdout: "", stderr: "" };
+  };
+  const rt = waylandRuntime({ run });
+  const out = await toolScreenshot(rt, { dir: tmpDir(), region: { x: 10, y: 20, width: 300, height: 200 } });
+  assert.deepEqual(calls.at(-1).slice(1, 3), ["-g", "10,20 300x200"]);
+  assert.deepEqual([out.width, out.height], [300, 200]);
+});
 test("截图：inline=false 时只给路径，不带图片数据", async () => {
   const rt = waylandRuntime();
   const out = await toolScreenshot(rt, { dir: tmpDir(), inline: false });
@@ -191,14 +205,27 @@ test("Wayland 滚轮：返回 unsupported_on_backend 而不是假成功", async 
 
 /* --------------------------------------------------------------- 键盘 */
 
-test("输入文本：空字符串被拒，正常文本发一条命令", async () => {
+test("输入文本：空字符串被拒；Wayland 未验证送达时明确失败", async () => {
   const run = fakeRun();
   const rt = waylandRuntime({ run });
   await assert.rejects(() => toolTypeText(rt, { text: "" }), /text/);
-  const out = await toolTypeText(rt, { text: "hello world" });
-  assert.equal(out.ok, true);
-  assert.equal(out.chars, 11);
-  assert.deepEqual(run.calls.at(-1), ["/usr/bin/ydotool", "type", "hello world"]);
+  await assert.rejects(
+    () => toolTypeText(rt, { text: "hello world" }),
+    (err) => err.code === "input_not_delivered"
+  );
+  assert.equal(run.calls.length, 0);
+});
+
+test("Wayland typing and keypress fail explicitly until client delivery is verified", async () => {
+  const run = fakeRun();
+  const rt = waylandRuntime({ run });
+  for (const action of [
+    () => toolTypeText(rt, { text: "probe" }),
+    () => require("../lib/tools.js").toolKeyPress(rt, { key: "ctrl+c" }),
+  ]) {
+    await assert.rejects(action, (err) => err.code === "input_not_delivered");
+  }
+  assert.equal(run.calls.length, 0);
 });
 
 /* --------------------------------------------------------------- 错误分支 */

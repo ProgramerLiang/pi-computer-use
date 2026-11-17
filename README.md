@@ -17,7 +17,7 @@ Linux 桌面的 **computer use** 插件，提供截屏、鼠标移动/点击/滚
 | `cu_screen_info` | 只读检查会话、屏幕尺寸和可用后端 |
 | `cu_window_list` | 列出窗口（X11 或 niri） |
 
-坐标以屏幕左上角为原点、单位为像素。截图默认内联（上限 6 MiB）；只需路径时设置 `inline: false`。
+坐标以屏幕左上角为原点、单位为逻辑像素；niri/Wayland 下区域参数原样传给 grim，grim 按合成器逻辑坐标裁切，PNG 按输出 scale 产生物理像素（例如 scale 1.25 时逻辑 320×180 输出 400×225）。不进行重采样；区域位置与逻辑边界由 grim 处理。X11 区域按根窗口像素坐标处理。截图默认内联（上限 6 MiB）；只需路径时设置 `inline: false`。
 
 ## 依赖
 
@@ -115,11 +115,10 @@ systemctl --user status ydotoold.service --no-pager 2>/dev/null || systemctl sta
 ls -l /dev/uinput "$XDG_RUNTIME_DIR/.ydotool_socket"
 ```
 
-- 实测环境为 niri/Wayland：屏幕信息、窗口枚举、整屏截图、鼠标移动和空白处点击已通过插件执行路径调用；用户级 ydotoold 进程与 socket 正在运行。`/dev/uinput` 为 `root:input`、0660，当前用户不在 input 组，但本会话设备访问可用。
-- 打字和组合键调用虽返回成功，当前终端/输入法中未能证明文本落盘或快捷键生效，因此这两项未验证通过。
-- 显示器为 1920×1080、1.25x 缩放；区域请求 320×180 实际返回 400×225，需在目标合成器/缩放环境核对区域坐标映射。
+实测环境为 niri/Wayland + fcitx5。`which wev` 为 `/usr/bin/wev`。wev 窗口聚焦后分别发送 `ydotool type 'CU_PROBE_a1'` 和 `wtype 'CU_PROBE_b2'`；焦点核验仍为 wev，但两次屏幕观察到的事件区域都为空。停用 fcitx5 后，在专用 Alacritty 中运行 `cat > /tmp/cu_typing_probe2.txt`，执行 `ydotool type 'CU_PROBE_7f3a9'` 和 Enter，读回原文为 `CU_PROBE_7f3a9`，`od -c` 显示 `C U _ P R O B E _ 7 f 3 a 9 \n`。这证明 fcitx5 状态影响文本输入，但由于 wev 无事件显示且其观察过程无法捕获 stdout，不能区分输入法拦截与更低层派发问题。Ctrl+C 测试未获得可靠的独立进程前后对照，不据此归因。fcitx5 已恢复运行。Wayland 下插件暂拒绝键盘输入并返回 `input_not_delivered`，避免把命令成功误报为客户端已收到。
+显示器物理尺寸 1920×1080、逻辑尺寸 1536×864、scale 1.25。修复前区域请求 320×180 被误作逻辑 320×180，PNG IHDR 为 400×225（等于逻辑尺寸再乘 1.25）。确认 grim `-g` 使用逻辑坐标后，修复为直接传逻辑区域；真实复测 320×180 输出 PNG 400×225。位置对照通过：整屏 PNG 中物理裁切 `(250,150)-(650,375)` 与区域 PNG 逐像素相同。
 
-再对安全的空白桌面区域测试鼠标/按键；打字测试前应聚焦临时文件或空白文本框。避免在未知焦点窗口中调用输入工具。
+Wayland 高缩放下 PNG IHDR 是物理像素尺寸，不会等于逻辑请求尺寸；本插件不做重采样。
 
 ### 故障排查
 
@@ -149,7 +148,7 @@ ls -l /dev/uinput "$XDG_RUNTIME_DIR/.ydotool_socket"
 ## 已知限制
 `ydotoold` 与 unit 的名称随发行版/打包版本而异；先检查包文件清单及本机 user/system unit。若本机存在系统级 `ydotool.service`，可用 `sudo systemctl enable --now ydotool.service` 启动；否则按发行版方式运行守护进程。本机实测为用户进程，socket 位于 `$XDG_RUNTIME_DIR/.ydotool_socket`。
 
-实测环境为 niri/Wayland：屏幕信息、窗口枚举、整屏截图、鼠标移动和空白处点击已通过插件执行路径调用；打字和组合键未完成效果验证。滚轮按设计返回不支持。区域请求 320×180 实得 400×225（显示器 1920×1080、1.25x 缩放），需注意坐标映射。
+实测环境为 niri/Wayland + fcitx5：设备层已观察到 ydotool EV_KEY 写入，焦点和 socket 已排除，但专用终端未收到文本，目标文件未创建。当前无法判定事件是被合成器拦截还是到达客户端后未处理：`wev` 未安装，且本轮未停用 fcitx5 做对照。niri 输入配置仅见常规 XKB 设置，未见键盘抓取选项。此前命令返回码为 0 不代表应用已收到事件；因此插件在 Wayland 下的 `cu_type_text` / `cu_key_press` 暂返回 `input_not_delivered`，不执行输入命令、不报告成功。验证客户端送达后才能恢复该后端。
 
 - Wayland 下 ydotool 1.0.4 的 CLI 没有滚轮子命令；插件明确返回 `unsupported_on_backend`。X11 的 xdotool 滚轮可用。
 - Wayland 协议没有通用窗口枚举接口。插件只对 niri 实现 `niri msg --json windows`；其它合成器返回 `no_window_backend`。

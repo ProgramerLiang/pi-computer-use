@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "id": "corripo.computer-use",
   "name": "PI Computer Use",
-  "version": "0.1.1",
-  "description": "Linux 桌面的 computer use 工具集：截图、鼠标移动/点击、键盘输入、环境探测。Wayland 走 grim + ydotool，X11 走 import/scrot + xdotool。",
+  "version": "0.1.2",
+  "description": "Linux 桌面自动化工具：截屏、鼠标、文本与组合键输入，并探测会话和窗口。支持 Wayland 与 X11；Wayland 下 fcitx5 文本注入默认 fail-closed，需显式允许短暂停用输入法。\nLinux desktop automation: screenshots, mouse control, text and key input, plus session and window inspection. Supports Wayland and X11; text injection with fcitx5 is fail-closed by default and requires explicit opt-in to suspend the input method.",
   "main": "main.js",
   "contributes": {
     "agentTools": [

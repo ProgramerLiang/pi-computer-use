@@ -187,3 +187,7 @@ lib/capture.js    截图、PNG 解析与区域裁剪
 lib/tools.js      工具 schema 与执行
  test/             离线单测
 ```
+
+## 社区
+
+本项目认可并感谢 [LINUX DO](https://linux.do) 社区。
